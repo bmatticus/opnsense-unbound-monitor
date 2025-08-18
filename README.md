@@ -47,6 +47,12 @@ This was built to address recurring issues where Unbound would silently fail unt
   Whether to use TCP instead of UDP for DNS queries.  
   Default: `FALSE`
 
+
+### Healthchecks Integration 
+- **HEALTHCHECKS_SLUG**
+  SLUG for healthcheck, if this is set the integration is enabled and updates will be sent to this
+  SLUG.
+
 ### Script Behavior
 - **MAX_ATTEMPTS**  
   Number of retry cycles to attempt resolution before giving up.  
@@ -54,6 +60,9 @@ This was built to address recurring issues where Unbound would silently fail unt
 - **LOG_LEVEL**  
   Logging verbosity (`ERROR`, `WARNING`, `INFO`, `DEBUG`, etc.).  
   Default: `WARN`
+- **INTERVAL**
+  Run Interval in seconds
+  Default: `60`
 
 ---
 

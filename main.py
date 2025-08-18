@@ -1,4 +1,7 @@
 import os
+import sys
+import io
+import json
 import requests
 import dns.resolver
 from base64 import b64encode
@@ -24,6 +27,8 @@ def get_env():
         "DNS_TIMEOUT": float(os.environ.get("DNS_TIMEOUT", "2.0")),
         "DNS_LIFETIME": float(os.environ.get("DNS_LIFETIME", "5.0")),
         "DNS_TCP": os.environ.get("DNS_TCP", "FALSE").upper() == "TRUE",
+        "INTERVAL": int(os.environ.get("INTERVAL", "60")),
+        "HEALTHCHECKS_SLUG": os.environ.get("HEALTHCHECKS_SLUG")
     }
     if os.environ.get("LOG_LEVEL"):
         req_log_level = os.environ.get("LOG_LEVEL")
@@ -33,7 +38,7 @@ def get_env():
 
 def get_logger(env):
     """
-    Initializes logging handler
+    Initializes logging /andler
     """
     logger = logging.getLogger(__name__)
     handler = logging.StreamHandler()
@@ -55,7 +60,11 @@ def get_unbound_status(env):
     Retrieves current status of unbound service
     """
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/status"
-    response = requests.get(uri, headers=get_auth(env), verify=env["VERIFY_SSL"])
+    try:
+        response = requests.get(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+    except requests.exceptions.ConnectionError:
+        logger.error("failed to get Unbound status, cannot connect to OPNSense %s", uri)
+
     return response
 
 def start_unbound_service(env):
@@ -63,7 +72,10 @@ def start_unbound_service(env):
     Attempts to start unbound service
     """
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/start"
-    response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"])
+    try:
+        response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+    except requests.exceptions.ConnectionError:
+        logger.error("failed to start Unbound service, cannot connect to OPNSense %s", uri)
     return response
 
 def stop_unbound_service(env):
@@ -71,7 +83,10 @@ def stop_unbound_service(env):
     Attempts to stop unbound service
     """
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/stop"
-    response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"])
+    try:
+        response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+    except requests.exceptions.ConnectionError:
+        logger.error("failed to stop Unbound service, cannot connect to OPNSense %s", uri)
     return response
 
 def restart_unbound_service(env):
@@ -79,7 +94,10 @@ def restart_unbound_service(env):
     Attempts to restart unbound service
     """
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/restart"
-    response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"])
+    try:
+        response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+    except requests.exceptions.ConnectionError:
+        logger.error("failed to restart Unbound service, cannot connect to OPNSense %s", uri)
     return response
 
 def get_resolver(env, logger):
@@ -111,9 +129,10 @@ def resolve_host(host, logger, env):
         logger.error("DNS FAILURE FOR %s: %s", host, e)
         return False
 
-def main():
-    env = get_env()
-    logger = get_logger(env)
+def ensure_unbound_service(env, logger):
+    """
+    Ensures Unbound is running
+    """
     unbound_status = get_unbound_status(env)
     while unbound_status.json().get("status") != "running":
         logger.error("Unbound not in running status, in status: %s", unbound_status.json().get("status"))
@@ -121,7 +140,15 @@ def main():
         unbound_status = get_unbound_status(env)
         time.sleep(1)
 
+def ensure_unbound_function(env, logger):
+    """
+    Attempts resolution of hosts and restarts Unbound service if necessary
+    """
+    captured_output = io.StringIO()
+    captured_output_handler = logging.StreamHandler(captured_output)
+    logger.addHandler(captured_output_handler)
     attempt_number = 0
+    success = False
     while attempt_number < env["MAX_ATTEMPTS"]:
         failure_count = 0
         for host in env.get("HOST_LIST"):
@@ -134,8 +161,55 @@ def main():
             logger.error("Failure count of %s, attempting to restart Unbound", failure_count)
             restart_unbound_service(env)
         else:
+            success = True
             break
         attempt_number += 1
+
+    if env.get("HEALTHCHECKS_SLUG"):
+        uri = f"{env['HEALTHCHECKS_SLUG']}"
+        if not success:
+            uri += "/fail"
+        try:
+            response = requests.post(uri, data=json.dumps({"output": captured_output.getvalue()}), headers={"Content-Type": "application/json"}, timeout=60)
+            if response.status_code != 200:
+                logger.error("failed to post healthchecks update: %s", response.content)
+        except requests.exceptions.ConnectionError:
+            logger.error("failed to post healthchecks update, could not connect to healthchecks SLUG %s", env["HEALTHCHECKS_SLUG"])
+    logger.removeHandler(captured_output_handler)
+    return success
+
+def start_stdout_capture():
+    """
+    Starts capturing STDOUT output, returns buffer
+    """
+    captured_output = io.StringIO()
+    sys.stdout = captured_output
+    return captured_output
+
+def stop_stdout_capture():
+    """
+    Stops capturing STDOUT output
+    """
+    sys.stdout = sys.__stdout__
+
+def main():
+    env = get_env()
+    logger = get_logger(env)
+    logger.info("Starting OPNSense-Unbound-Monitor Service")
+    while True:
+        logger.info("Starting OPNSense-Unbound-Monitor Interval")
+        if env.get("HEALTHCHECKS_SLUG"):
+            uri = f"{env['HEALTHCHECKS_SLUG']}/start"
+            try:
+                response = requests.get(uri, timeout=60)
+                if response.status_code != 200:
+                    logger.error("failed to start healthcheck: %s", response.content)
+            except requests.exceptions.ConnectionError:
+                logger.error("failed to start healthcheck, cannot connect to server %s", uri)
+        ensure_unbound_service(env, logger)
+        function_status = ensure_unbound_function(env, logger)
+        logger.info("Completed OPNSense-Unbound-Monitor Interval")
+        time.sleep(env["INTERVAL"])
 
 if __name__ == "__main__":
     main()
