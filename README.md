@@ -49,8 +49,8 @@ This was built to address recurring issues where Unbound would silently fail unt
 
 
 ### Healthchecks Integration 
-- **HEALTHCHECKS_SLUG**
-  SLUG for healthcheck, if this is set the integration is enabled and updates will be sent to this
+- **HEALTHCHECKS_SLUG**  
+  SLUG for healthcheck, if this is set the integration is enabled and updates will be sent to this  
   SLUG.
 
 ### Script Behavior
@@ -61,7 +61,7 @@ This was built to address recurring issues where Unbound would silently fail unt
   Logging verbosity (`ERROR`, `WARNING`, `INFO`, `DEBUG`, etc.).  
   Default: `WARN`
 - **INTERVAL**
-  Run Interval in seconds
+  Run Interval in seconds  
   Default: `60`
 
 ---
