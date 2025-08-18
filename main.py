@@ -74,6 +74,7 @@ def start_unbound_service(env):
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/start"
     try:
         response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+        ping_healthchecks(env, "log", f"Started Unbound Service: {response}")
     except requests.exceptions.ConnectionError:
         logger.error("failed to start Unbound service, cannot connect to OPNSense %s", uri)
     return response
@@ -85,6 +86,7 @@ def stop_unbound_service(env):
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/stop"
     try:
         response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+        ping_healthchecks(env, "log", f"Stopped Unbound Service: {response}")
     except requests.exceptions.ConnectionError:
         logger.error("failed to stop Unbound service, cannot connect to OPNSense %s", uri)
     return response
@@ -96,6 +98,7 @@ def restart_unbound_service(env):
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/restart"
     try:
         response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+        ping_healthchecks(env, "log", f"Restarted Unbound Service: {response}")
     except requests.exceptions.ConnectionError:
         logger.error("failed to restart Unbound service, cannot connect to OPNSense %s", uri)
     return response
@@ -165,16 +168,7 @@ def ensure_unbound_function(env, logger):
             break
         attempt_number += 1
 
-    if env.get("HEALTHCHECKS_SLUG"):
-        uri = f"{env['HEALTHCHECKS_SLUG']}"
-        if not success:
-            uri += "/fail"
-        try:
-            response = requests.post(uri, data=json.dumps({"output": captured_output.getvalue()}), headers={"Content-Type": "application/json"}, timeout=60)
-            if response.status_code != 200:
-                logger.error("failed to post healthchecks update: %s", response.content)
-        except requests.exceptions.ConnectionError:
-            logger.error("failed to post healthchecks update, could not connect to healthchecks SLUG %s", env["HEALTHCHECKS_SLUG"])
+    ping_healthchecks(env, 'success', captured_output.getvalue(), success)
     logger.removeHandler(captured_output_handler)
     return success
 
@@ -192,20 +186,45 @@ def stop_stdout_capture():
     """
     sys.stdout = sys.__stdout__
 
+def ping_healthchecks(env, ping_type = 'success', ping_content = None, success = False):
+    if not env.get("HEALTHCHECKS_SLUG"):
+        return
+
+    if ping_content is None:
+        ping_content = {}
+    if ping_type.lower() == "success":
+        uri = f"{env['HEALTHCHECKS_SLUG']}"
+        if not success:
+            uri += "/fail"
+    elif ping_type.lower() == "log":
+        uri = f"{env['HEALTHCHECKS_SLUG']}/log"
+    elif ping_type.lower() == "start":
+        uri = f"{env['HEALTHCHECKS_SLUG']}/start"
+    try:
+        response = None
+        if ping_content:
+            response = requests.post(
+                    uri,
+                    data=json.dumps({"content": ping_content}),
+                    headers={"Content-Type": "application/json"},
+                    timeout=60)
+        else:
+            response = requests.get(
+                    uri,
+                    timeout=60)
+
+        if response and response.status_code != 200:
+            logger.error("failed to ping healthchecks: %s", response.content)
+    except requests.exceptions.ConnectionError:
+        logger.error("failed to post healthchecks update, could not connect to healthchecks SLUG %s", env["HEALTHCHECKS_SLUG"])
+
 def main():
     env = get_env()
     logger = get_logger(env)
     logger.info("Starting OPNSense-Unbound-Monitor Service")
     while True:
         logger.info("Starting OPNSense-Unbound-Monitor Interval")
-        if env.get("HEALTHCHECKS_SLUG"):
-            uri = f"{env['HEALTHCHECKS_SLUG']}/start"
-            try:
-                response = requests.get(uri, timeout=60)
-                if response.status_code != 200:
-                    logger.error("failed to start healthcheck: %s", response.content)
-            except requests.exceptions.ConnectionError:
-                logger.error("failed to start healthcheck, cannot connect to server %s", uri)
+        ping_healthchecks(env, 'start')
         ensure_unbound_service(env, logger)
         function_status = ensure_unbound_function(env, logger)
         logger.info("Completed OPNSense-Unbound-Monitor Interval")
