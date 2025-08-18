@@ -60,7 +60,7 @@ This was built to address recurring issues where Unbound would silently fail unt
 - **LOG_LEVEL**  
   Logging verbosity (`ERROR`, `WARNING`, `INFO`, `DEBUG`, etc.).  
   Default: `WARN`
-- **INTERVAL**
+- **INTERVAL**  
   Run Interval in seconds  
   Default: `60`
 
