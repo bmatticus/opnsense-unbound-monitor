@@ -55,19 +55,18 @@ def get_auth(env):
     auth = b64encode(f"{env['OPNSENSE_KEY']}:{env['OPNSENSE_SECRET']}".encode()).decode()
     return {"Authorization": f"Basic {auth}"}
 
-def get_unbound_status(env):
+def get_unbound_status(env, logger):
     """
     Retrieves current status of unbound service
     """
     uri = f"{env['OPNSENSE_HOST_SCHEMA']}://{env['OPNSENSE_HOST']}:{env['OPNSENSE_HOST_PORT']}/api/unbound/service/status"
     try:
         response = requests.get(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
+        return response
     except requests.exceptions.ConnectionError:
         logger.error("failed to get Unbound status, cannot connect to OPNSense %s", uri)
 
-    return response
-
-def start_unbound_service(env):
+def start_unbound_service(env, logger):
     """
     Attempts to start unbound service
     """
@@ -75,11 +74,11 @@ def start_unbound_service(env):
     try:
         response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
         ping_healthchecks(env, "log", f"Started Unbound Service: {response}")
+        return response
     except requests.exceptions.ConnectionError:
         logger.error("failed to start Unbound service, cannot connect to OPNSense %s", uri)
-    return response
 
-def stop_unbound_service(env):
+def stop_unbound_service(env, logger):
     """
     Attempts to stop unbound service
     """
@@ -87,11 +86,11 @@ def stop_unbound_service(env):
     try:
         response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
         ping_healthchecks(env, "log", f"Stopped Unbound Service: {response}")
+        return response
     except requests.exceptions.ConnectionError:
         logger.error("failed to stop Unbound service, cannot connect to OPNSense %s", uri)
-    return response
 
-def restart_unbound_service(env):
+def restart_unbound_service(env, logger):
     """
     Attempts to restart unbound service
     """
@@ -99,9 +98,9 @@ def restart_unbound_service(env):
     try:
         response = requests.post(uri, headers=get_auth(env), verify=env["VERIFY_SSL"], timeout=60)
         ping_healthchecks(env, "log", f"Restarted Unbound Service: {response}")
+        return response
     except requests.exceptions.ConnectionError:
         logger.error("failed to restart Unbound service, cannot connect to OPNSense %s", uri)
-    return response
 
 def get_resolver(env, logger):
     """ 
@@ -136,10 +135,13 @@ def ensure_unbound_service(env, logger):
     """
     Ensures Unbound is running
     """
-    unbound_status = get_unbound_status(env)
+    unbound_status = get_unbound_status(env, logger)
+    if not unbound_status:
+        logger.error("Failed to get unbound status")
+        return
     while unbound_status.json().get("status") != "running":
         logger.error("Unbound not in running status, in status: %s", unbound_status.json().get("status"))
-        start_unbound_service(env)
+        start_unbound_service(env, logger)
         unbound_status = get_unbound_status(env)
         time.sleep(1)
 
@@ -162,7 +164,7 @@ def ensure_unbound_function(env, logger):
                 failure_count += 1
         if failure_count > 1:
             logger.error("Failure count of %s, attempting to restart Unbound", failure_count)
-            restart_unbound_service(env)
+            restart_unbound_service(env, logger)
         else:
             success = True
             break
