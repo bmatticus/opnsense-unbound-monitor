@@ -158,10 +158,11 @@ def ensure_unbound_function(env, logger):
         failure_count = 0
         for host in env.get("HOST_LIST"):
             res = resolve_host(host, logger, env)
-            for answer in res:
-                logger.info("Resolution for host %s: %s", host, answer)
             if not res:
                 failure_count += 1
+                continue
+            for answer in res:
+                logger.info("Resolution for host %s: %s", host, answer)
         if failure_count > 1:
             logger.error("Failure count of %s, attempting to restart Unbound", failure_count)
             restart_unbound_service(env, logger)
